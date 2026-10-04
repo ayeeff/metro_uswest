@@ -1,0 +1,206 @@
+name: metro-transit
+
+# Stations and route geometry for every *-metro-train-atlas page in this region.
+#
+# Split from the neighbourhood repos on purpose. That pipeline early-returns when
+# neighbourhoods come back empty, which is how transit output vanished with no
+# error: green jobs, zero files. This job never consults neighbourhoods.
+#
+# One job per (extract, cluster), capped at 10 cities. The cap is blast radius,
+# not throughput: a job's log, artifacts and exit status are shared by every city
+# in it, so one city that aborts fails the whole group and discards the cities
+# that built fine. Ten is cheap to queue and keeps the verdict per group.
+#
+# Clustering keeps the coarse cut small, since `osmium extract -b` re-reads its
+# entire input per bbox: cutting a city straight off a 2-4 GiB country file costs
+# a full scan, measured at 34 minutes.
+
+on:
+  workflow_dispatch:
+    inputs:
+      slug:
+        description: "Restrict to one city slug (default: every metro-train page here)"
+        required: false
+        type: string
+      publish:
+        description: "Upload to R2 for the site to serve"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      groups: ${{ steps.plan.outputs.groups }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - id: plan
+        env:
+          SLUG: ${{ inputs.slug }}
+        run: |
+          set -euo pipefail
+          # The matrix is precomputed and committed. Computing it with jq failed in
+          # CI under `set -euo pipefail` and exited 1 with no message; untestable
+          # shell is the problem, so the grouping is generated and this step only
+          # filters. It goes through a file because the unfiltered matrix is one
+          # very long line and a stray character would corrupt the step output.
+          python scripts/select_transit_groups.py \
+            --groups metro-transit-groups.json \
+            --slug "$SLUG" \
+            --out groups-out.json
+          echo "groups=$(cat groups-out.json)" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        group: ${{ fromJSON(needs.plan.outputs.groups) }}
+    env:
+      EXTRACT: ${{ matrix.group.extract }}
+      CITIES: ${{ join(matrix.group.cities, ' ') }}
+      R2_BUCKET: geo-datalake
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_ENDPOINT_URL: https://${{ secrets.CF_ACCOUNT_ID }}.r2.cloudflarestorage.com
+      AWS_DEFAULT_REGION: auto
+      AWS_REQUEST_CHECKSUM_CALCULATION: WHEN_REQUIRED
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install osmium (C++ CLI) + pyosmium
+        run: |
+          set -euo pipefail
+          # Both are needed: the C++ `osmium` does the bbox cut and pyosmium reads
+          # the cut file. Installing only pyosmium fails at the cut step.
+          sudo apt-get update
+          sudo apt-get install -y osmium-tool
+          pip3 install --break-system-packages --quiet osmium boto3
+
+      - name: Configure R2
+        run: |
+          set -euo pipefail
+          aws configure set aws_access_key_id "$R2_ACCESS_KEY_ID"
+          aws configure set aws_secret_access_key "$R2_SECRET_ACCESS_KEY"
+
+      - name: Fetch the country extract
+        run: |
+          set -euo pipefail
+          mkdir -p work
+          KEY="sources/osm/${EXTRACT}-latest.osm.pbf"
+          SIZE=$(aws s3api head-object --bucket "$R2_BUCKET" --key "$KEY" \
+            --query 'ContentLength' --output text 2>/dev/null) || SIZE=""
+          if [ -z "$SIZE" ] || [ "$SIZE" = "None" ]; then
+            echo "::error::s3://$R2_BUCKET/$KEY not found. Stage the extract first."
+            echo "::error::Do NOT fall back to a public Overpass mirror."
+            exit 1
+          fi
+          printf 'source=s3://%s/%s (%s bytes)\n' "$R2_BUCKET" "$KEY" "$SIZE"
+          aws s3 cp "s3://$R2_BUCKET/$KEY" work/src.osm.pbf --no-progress --only-show-errors
+          osmium fileinfo work/src.osm.pbf | head -n 4
+
+      - name: Cut the union once, then each city from that
+        run: |
+          set -euo pipefail
+          declare -a LONS LATS
+          for ENTRY in $CITIES; do
+            B="${ENTRY#*:}"
+            IFS=',' read -r a b c d <<<"$B"
+            LONS+=("$a" "$c"); LATS+=("$b" "$d")
+          done
+          lo1=$(printf '%s\n' "${LONS[@]}" | sort -g | head -1)
+          lo2=$(printf '%s\n' "${LONS[@]}" | sort -g | tail -1)
+          la1=$(printf '%s\n' "${LATS[@]}" | sort -g | head -1)
+          la2=$(printf '%s\n' "${LATS[@]}" | sort -g | tail -1)
+          printf 'union bbox=%s,%s,%s,%s for %s cities\n' \
+            "$lo1" "$la1" "$lo2" "$la2" "${#LONS[@]}"
+          osmium extract -b "$lo1,$la1,$lo2,$la2" -s complete_ways -F pbf \
+            -o work/coarse.osm.pbf work/src.osm.pbf
+          osmium fileinfo -e work/coarse.osm.pbf | head -n 6
+          rm -f work/src.osm.pbf
+
+      - name: Extract stations and lines per city
+        run: |
+          set -euo pipefail
+          OK=0; FAILED=""
+          for ENTRY in $CITIES; do
+            SLUG="${ENTRY%%:*}"
+            B="${ENTRY#*:}"
+            # Registry order is minLng,minLat,maxLng,maxLat; the extractors take
+            # minLat,minLon,maxLat,maxLon. Split on commas rather than swapping by
+            # hand: a transposed tail is still a valid bbox and returns 0 stations
+            # without failing.
+            IFS=',' read -r lon1 lat1 lon2 lat2 <<<"$B"
+            mkdir -p "work/out/$SLUG"
+            python scripts/extract_transit_hubs.py --city "$SLUG" --extract "$EXTRACT" \
+              --pbf work/coarse.osm.pbf --bbox="$lat1,$lon1,$lat2,$lon2" \
+              --filters transit-hub-filters.json \
+              --out "work/out/$SLUG/transit-stations.json" \
+              >"work/out/$SLUG/hubs.log" 2>&1 \
+              && OK=$((OK+1)) \
+              || { FAILED="$FAILED $SLUG"; echo "::warning::stations failed $SLUG"; }
+            python scripts/extract_transit_lines.py --city "$SLUG" --extract "$EXTRACT" \
+              --pbf work/coarse.osm.pbf --bbox="$lat1,$lon1,$lat2,$lon2" \
+              --filters transit-hub-filters.json \
+              --out "work/out/$SLUG/transit-lines.json" \
+              >"work/out/$SLUG/lines.log" 2>&1 \
+              || echo "::warning::lines failed $SLUG"
+          done
+          echo "  cities with stations written: $OK"
+          [ -n "$FAILED" ] && echo "::warning::no stations for:$FAILED"
+          exit 0
+
+      - name: Summarise
+        if: always()
+        run: |
+          {
+            echo "| city | stations | lines |"
+            echo "| --- | --- | --- |"
+            for D in work/out/*/; do
+              S="${D%/}"; S="${S##*/}"
+              ST=0; LN=0
+              [ -f "$D/transit-stations.json" ] && \
+                ST=$(python -c "import json,sys;print(json.load(open(sys.argv[1]))['coverage']['distinctStations'])" "$D/transit-stations.json")
+              [ -f "$D/transit-lines.json" ] && \
+                LN=$(python -c "import json,sys;print(json.load(open(sys.argv[1]))['coverage']['linesEmitted'])" "$D/transit-lines.json")
+              echo "| $S | $ST | $LN |"
+            done
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish to R2
+        if: inputs.publish == true
+        run: |
+          set -euo pipefail
+          N=0
+          for D in work/out/*/; do
+            S="${D%/}"; S="${S##*/}"
+            for F in transit-stations.json transit-lines.json; do
+              [ -f "$D$F" ] || continue
+              aws s3 cp "$D$F" "s3://globe/data/${S}-2d/$F" --no-progress --only-show-errors
+              aws s3 cp "$D$F" "s3://$R2_BUCKET/sources/osm/places/${S}/$F" \
+                --no-progress --only-show-errors
+              N=$((N+1))
+            done
+          done
+          echo "  published $N files to globe/data/<slug>-2d/ and sources/osm/places/<slug>/"
+
+      - name: Keep the output
+        uses: actions/upload-artifact@v4
+        with:
+          name: transit-${{ matrix.group.extract }}-${{ github.run_attempt }}
+          path: work/out/
+          retention-days: 14

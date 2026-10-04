@@ -1,0 +1,194 @@
+{
+  "_comment": "Precomputed job matrix for metro-transit.yml, metro_uswest. One job per (extract, cluster), capped at 10 cities so a single failing city cannot fail its whole group. Clustering bounds the coarse cut; the cap bounds the blast radius. Generated rather than computed in jq, which failed in CI under set -euo pipefail with no message.",
+  "perJob": 10,
+  "cityCount": 54,
+  "groupCount": 22,
+  "groups": [
+    {
+      "extract": "us-midwest",
+      "cluster": "us-midwest-107",
+      "cities": [
+        "houston:-95.63998,29.51997,-95.03998,30.11997",
+        "neworleans:-90.25595,29.88982,-89.9204,30.06354"
+      ]
+    },
+    {
+      "extract": "us-midwest",
+      "cluster": "us-midwest-108",
+      "cities": [
+        "sanantonio:-98.84197,29.2085,-98.28337,29.72917"
+      ]
+    },
+    {
+      "extract": "us-midwest",
+      "cluster": "us-midwest-111",
+      "cities": [
+        "austin:-97.99,30.09,-97.49,30.45"
+      ]
+    },
+    {
+      "extract": "us-midwest",
+      "cluster": "us-midwest-115",
+      "cities": [
+        "arlington:-97.23217,32.58559,-97.03342,32.82744",
+        "dallas:-97.05,32.6,-96.55,32.96",
+        "fortworth:-97.56913,32.5348,-96.99324,33.08973",
+        "irving:-97.04338,32.77804,-96.90081,32.96422",
+        "plano:-96.87933,32.97755,-96.62633,33.13093"
+      ]
+    },
+    {
+      "extract": "us-midwest",
+      "cluster": "us-midwest-118",
+      "cities": [
+        "oklahomacity:-97.80096,35.2869,-97.31413,35.70148"
+      ]
+    },
+    {
+      "extract": "us-midwest",
+      "cluster": "us-midwest-120",
+      "cities": [
+        "wichita:-97.53962,37.58539,-97.15988,37.77483"
+      ]
+    },
+    {
+      "extract": "us-midwest",
+      "cluster": "us-midwest-122",
+      "cities": [
+        "kansascity:-94.89406,38.81741,-94.32099,39.35706",
+        "stlouis:-90.53199,38.42275,-90.13712,38.81909"
+      ]
+    },
+    {
+      "extract": "us-midwest",
+      "cluster": "us-midwest-125",
+      "cities": [
+        "councilbluffs:-96.11,41.08,-95.61,41.44",
+        "lincoln:-96.81737,40.70492,-96.5713,40.90349",
+        "omaha:-96.28166,41.12022,-95.88201,41.3553"
+      ]
+    },
+    {
+      "extract": "us-pacific",
+      "cluster": "us-pacific-159",
+      "cities": [
+        "honolulu:-158.11373,21.24168,-157.65216,21.52697"
+      ]
+    },
+    {
+      "extract": "us-pacific",
+      "cluster": "us-pacific-160",
+      "cities": [
+        "anchorage:-150.04404,61.07572,-149.51163,61.35729"
+      ]
+    },
+    {
+      "extract": "us-west",
+      "cluster": "us-west-1",
+      "cities": [
+        "oakland:-122.3964,37.6795,-122.1464,37.9295",
+        "sanbernardino:-117.4398,33.9583,-117.1398,34.2583"
+      ]
+    },
+    {
+      "extract": "us-west",
+      "cluster": "us-west-140",
+      "cities": [
+        "elpaso:-106.64251,31.61781,-106.14166,31.98209",
+        "gilbert:-111.84605,33.21009,-111.66618,33.40599",
+        "mesa:-111.91913,33.28326,-111.55694,33.49111",
+        "phoenix:-112.32,33.27,-111.82,33.63",
+        "tucson:-111.14237,32.02615,-110.72533,32.54216"
+      ]
+    },
+    {
+      "extract": "us-west",
+      "cluster": "us-west-141",
+      "cities": [
+        "anaheim:-118.04131,33.76924,-117.70628,33.88771",
+        "carlsbad:-117.53,32.94,-117.03,33.3",
+        "longbeach:-118.2377,33.73243,-118.0497,33.89794",
+        "losangeles:-118.47998,33.68998,-117.87998,34.28998",
+        "orange:-118.117,33.565,-117.617,33.925",
+        "riverside:-117.52745,33.86261,-117.24026,34.0353",
+        "sandiego:-117.41,32.54,-116.91,32.9",
+        "santaana:-117.94208,33.65689,-117.81379,33.79369"
+      ]
+    },
+    {
+      "extract": "us-west",
+      "cluster": "us-west-142",
+      "cities": [
+        "albuquerque:-106.78161,34.99519,-106.46475,35.23801"
+      ]
+    },
+    {
+      "extract": "us-west",
+      "cluster": "us-west-143",
+      "cities": [
+        "bakersfield:-119.31232,35.24008,-118.80275,35.46836",
+        "burbank:-118.56,34,-118.06,34.36",
+        "santamonica:-118.74,33.84,-118.24,34.2",
+        "shermanoaks:-118.7,33.97,-118.2,34.33"
+      ]
+    },
+    {
+      "extract": "us-west",
+      "cluster": "us-west-145",
+      "cities": [
+        "fresno:-119.95406,36.64717,-119.64445,36.91196",
+        "henderson:-115.18034,35.91852,-114.87541,36.10261",
+        "lasvegas:-115.38,36,-115.02,36.28"
+      ]
+    },
+    {
+      "extract": "us-west",
+      "cluster": "us-west-146",
+      "cities": [
+        "sanfrancisco:-122.75997,37.44001,-122.15998,38.04001",
+        "sanjose:-122.04817,37.19898,-121.73733,37.44474",
+        "stockton:-121.41012,37.8801,-121.1128,38.08051"
+      ]
+    },
+    {
+      "extract": "us-west",
+      "cluster": "us-west-147",
+      "cities": [
+        "aurora:-104.90519,39.53938,-104.65892,39.85202",
+        "coloradosprings:-104.90641,38.69681,-104.64897,39.07254",
+        "denver:-105.28402,39.43919,-104.68402,40.03919"
+      ]
+    },
+    {
+      "extract": "us-west",
+      "cluster": "us-west-148",
+      "cities": [
+        "sacramento:-121.57393,38.4201,-121.3046,38.72314"
+      ]
+    },
+    {
+      "extract": "us-west",
+      "cluster": "us-west-150",
+      "cities": [
+        "saltlakecity:-112.14,40.58,-111.64,40.94"
+      ]
+    },
+    {
+      "extract": "us-west",
+      "cluster": "us-west-151",
+      "cities": [
+        "hillsboro:-123.24,45.34,-122.74,45.7",
+        "portland:-122.89083,45.36171,-122.41079,45.64365"
+      ]
+    },
+    {
+      "extract": "us-west",
+      "cluster": "us-west-153",
+      "cities": [
+        "bellevue:-122.45,47.43,-121.95,47.79",
+        "seattle:-122.6321,47.3062,-122.0321,47.9062",
+        "tacoma:-122.65392,47.06134,-122.20746,47.29948"
+      ]
+    }
+  ]
+}
