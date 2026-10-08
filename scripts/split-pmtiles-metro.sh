@@ -32,18 +32,28 @@ if ! aws s3 cp "s3://globe/data/${SLUG}-2d/${SLUG}.pmtiles" "${WORKDIR}/input.pm
   exit 0
 fi
 
-# 2. Run tile-join to export granular layers to tile folder
-echo "[2/4] Running tile-join to extract water, pois, places, roads..."
+# 2. Run tile-join to export granular layers (water, pois, places, roads, landuse)
+echo "[2/4] Running tile-join to extract water, pois, places, roads, landuse..."
 mkdir -p "${WORKDIR}/tiles"
 tile-join -e "${WORKDIR}/tiles" \
   --layer=water \
   --layer=pois \
   --layer=places \
   --layer=roads \
+  --layer=landuse \
   "${WORKDIR}/input.pmtiles" || true
 
+# Strip landuse & building layers from base PMTiles (shrinks base archive by up to 50%-70%)
+echo "  [OPTIMIZE] Stripping landuse and building layers from base PMTiles..."
+if tile-join --exclude-layer=landuse --exclude-layer=building -o "${WORKDIR}/stripped.pmtiles" "${WORKDIR}/input.pmtiles" 2>/dev/null; then
+  if [ -s "${WORKDIR}/stripped.pmtiles" ]; then
+    cp "${WORKDIR}/stripped.pmtiles" "${WORKDIR}/out/${SLUG}.pmtiles"
+    echo "  ✓ Generated stripped PMTiles without landuse/building."
+  fi
+fi
+
 # 3. Run Node extractor to produce JSON / BIN artifacts
-echo "[3/4] Generating water, POIs, places, and street network artifacts..."
+echo "[3/4] Generating water, POIs, places, street network, and landuse artifacts..."
 mkdir -p "${WORKDIR}/out"
 node scripts/extract-pmtiles-metro.mjs \
   --tiles-dir "${WORKDIR}/tiles" \
@@ -52,6 +62,12 @@ node scripts/extract-pmtiles-metro.mjs \
 
 # 4. Upload to R2 globe bucket
 echo "[4/4] Uploading artifacts to R2 (s3://globe/data/${SLUG}-2d/)..."
+
+# Upload optimized PMTiles if generated
+if [ -f "${WORKDIR}/out/${SLUG}.pmtiles" ]; then
+  aws s3 cp "${WORKDIR}/out/${SLUG}.pmtiles" "s3://globe/data/${SLUG}-2d/${SLUG}.pmtiles" --endpoint-url "$ENDPOINT"
+  echo "  ✓ Uploaded optimized s3://globe/data/${SLUG}-2d/${SLUG}.pmtiles (landuse stripped)"
+fi
 
 # Immediate 100% Win: water.json and water-rings.json
 if [ -f "${WORKDIR}/out/water.json" ]; then
@@ -63,6 +79,14 @@ if [ -f "${WORKDIR}/out/water-rings.json" ]; then
   aws s3 cp "${WORKDIR}/out/water-rings.json" "s3://globe/data/${SLUG}-2d/water-rings.json" --endpoint-url "$ENDPOINT"
   echo "  ✓ Uploaded water-rings.json"
 fi
+
+# Landuse & Parks Artifacts
+for FILE in parks.json landuse.json landuse.bin; do
+  if [ -f "${WORKDIR}/out/${FILE}" ]; then
+    aws s3 cp "${WORKDIR}/out/${FILE}" "s3://globe/data/${SLUG}-2d/${FILE}" --endpoint-url "$ENDPOINT"
+    echo "  ✓ Uploaded ${FILE}"
+  fi
+done
 
 # Closing the Long Tail & Street Network (backfill if missing in R2, or FORCE=true)
 FORCE="${FORCE:-false}"
