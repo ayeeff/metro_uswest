@@ -90,6 +90,9 @@ async function main() {
   const districtsFeatures = [];
   const streetsFeatures = [];
   const streetLines = []; // for streets.bin
+  const parksFeatures = [];
+  const landuseFeatures = [];
+  const landuseRings = []; // for landuse.bin
 
   const seenPois = new Set();
   const seenPlaces = new Set();
@@ -264,6 +267,50 @@ async function main() {
         }
       }
     }
+
+    // 5. LANDUSE & PARKS LAYER
+    const landuseLayer = vt.layers['landuse'];
+    if (landuseLayer) {
+      const extent = landuseLayer.extent || 4096;
+      for (let i = 0; i < landuseLayer.length; i++) {
+        const feat = landuseLayer.feature(i);
+        if (feat.type !== 3) continue; // Polygons only
+        const geom = feat.loadGeometry();
+        const kind = feat.properties.kind || feat.properties.class || 'landuse';
+        const name = feat.properties.name || feat.properties['name:en'] || '';
+        const props = { name, kind, kind_detail: feat.properties.kind_detail || '' };
+
+        const rings = [];
+        for (let rIdx = 0; rIdx < geom.length; rIdx++) {
+          const ring = geom[rIdx];
+          if (ring.length < 3) continue;
+          const coords = ring.map(pt => tileCoordsToLngLat(pt.x, pt.y, z, x, y, extent));
+          rings.push(coords);
+          if (rIdx === 0 && coords.length >= 4) {
+            landuseRings.push(coords);
+          }
+        }
+
+        if (rings.length > 0) {
+          const polygonFeature = {
+            type: 'Feature',
+            geometry: { type: 'Polygon', coordinates: rings },
+            properties: props
+          };
+          landuseFeatures.push(polygonFeature);
+
+          const isPark = [
+            'park', 'forest', 'meadow', 'grass', 'wood', 'nature_reserve',
+            'garden', 'recreation_ground', 'pitch', 'playground', 'greenery',
+            'allotments', 'village_green', 'golf_course'
+          ].includes(kind);
+
+          if (isPark) {
+            parksFeatures.push(polygonFeature);
+          }
+        }
+      }
+    }
   }
 
   // --- WRITE WATER ARTIFACTS ---
@@ -354,6 +401,66 @@ async function main() {
     const binPath = path.join(outDir, 'streets.bin');
     fs.writeFileSync(binPath, binBuf);
     console.log(`  ✓ Wrote streets.bin (${(binBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
+  }
+
+  // --- WRITE LANDUSE & PARKS ARTIFACTS ---
+  if (parksFeatures.length > 0) {
+    const parksPath = path.join(outDir, 'parks.json');
+    fs.writeFileSync(parksPath, JSON.stringify({ type: 'FeatureCollection', features: parksFeatures }));
+    console.log(`  ✓ Wrote parks.json (${parksFeatures.length} features, ${(fs.statSync(parksPath).size / 1024).toFixed(1)} KB)`);
+  }
+  if (landuseFeatures.length > 0) {
+    const luPath = path.join(outDir, 'landuse.json');
+    fs.writeFileSync(luPath, JSON.stringify({ type: 'FeatureCollection', features: landuseFeatures }));
+    console.log(`  ✓ Wrote landuse.json (${landuseFeatures.length} features, ${(fs.statSync(luPath).size / 1024).toFixed(1)} KB)`);
+
+    // Pack landuse.bin (TKLU binary format)
+    let totalVerts = 0;
+    let minLon = 180, minLat = 90;
+    for (const ring of landuseRings) {
+      totalVerts += ring.length;
+      for (const [lon, lat] of ring) {
+        if (lon < minLon) minLon = lon;
+        if (lat < minLat) minLat = lat;
+      }
+    }
+
+    const polyCount = landuseRings.length;
+    const headerSize = 32;
+    const indexSize = polyCount * 4;
+    const vertSize = totalVerts * 4;
+    const totalBinSize = headerSize + indexSize + vertSize;
+
+    const binBuf = Buffer.alloc(totalBinSize);
+    binBuf.write('TKLU', 0, 4, 'ascii');
+    binBuf.writeUInt32LE(1, 4);
+    binBuf.writeUInt32LE(polyCount, 8);
+    binBuf.writeUInt32LE(totalVerts, 12);
+    binBuf.writeInt32LE(Math.round(minLon * 1e6), 16);
+    binBuf.writeInt32LE(Math.round(minLat * 1e6), 20);
+    binBuf.writeInt32LE(0, 24);
+    binBuf.writeInt32LE(13, 28);
+
+    let currentOffset = 0;
+    let vertByteOffset = headerSize + indexSize;
+    const scale = 1e5;
+
+    for (let i = 0; i < polyCount; i++) {
+      binBuf.writeUInt32LE(currentOffset, headerSize + i * 4);
+      const ring = landuseRings[i];
+      for (const [vLon, vLat] of ring) {
+        const dx = Math.round((vLon - minLon) * scale);
+        const dy = Math.round((vLat - minLat) * scale);
+        binBuf.writeInt16LE(Math.max(-32768, Math.min(32767, dx)), vertByteOffset);
+        binBuf.writeInt16LE(Math.max(-32768, Math.min(32767, dy)), vertByteOffset + 2);
+        vertByteOffset += 4;
+        currentOffset++;
+      }
+    }
+
+    const binPath = path.join(outDir, 'landuse.bin');
+    fs.writeFileSync(binPath, binBuf);
+    console.log(`  ✓ Wrote landuse.bin (${(binBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
   }
 }
 
