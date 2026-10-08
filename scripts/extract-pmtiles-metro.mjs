@@ -45,6 +45,39 @@ function tileCoordsToLngLat(px, py, z, x, y, extent = 4096) {
   return [Number(lon.toFixed(6)), Number(lat.toFixed(6))];
 }
 
+function parseMaxspeed(val) {
+  if (!val) return null;
+  if (typeof val === 'number') return val;
+  const str = String(val).trim().toLowerCase();
+  if (str.endsWith('mph')) {
+    const num = parseFloat(str);
+    return isNaN(num) ? null : Math.round(num * 1.60934);
+  }
+  if (str.endsWith('knots')) {
+    const num = parseFloat(str);
+    return isNaN(num) ? null : Math.round(num * 1.852);
+  }
+  const num = parseFloat(str);
+  return isNaN(num) ? null : Math.round(num);
+}
+
+function parseLanes(val) {
+  if (!val) return null;
+  const num = parseInt(val, 10);
+  return (num > 0 && num <= 16) ? num : null;
+}
+
+function extractMultilingualNames(props) {
+  const names = {};
+  for (const [k, v] of Object.entries(props)) {
+    if (!v) continue;
+    if (k.startsWith('name:') || k === 'name_en' || k === 'name_zh' || k === 'name_ja' || k === 'int_name' || k === 'loc_name') {
+      names[k] = String(v);
+    }
+  }
+  return Object.keys(names).length > 0 ? names : null;
+}
+
 function findTileFiles(dir) {
   const results = [];
   function recurse(d) {
@@ -93,6 +126,7 @@ async function main() {
   const parksFeatures = [];
   const landuseFeatures = [];
   const landuseRings = []; // for landuse.bin
+  const transitFeatures = [];
 
   const seenPois = new Set();
   const seenPlaces = new Set();
@@ -174,6 +208,13 @@ async function main() {
         if (seenPois.has(key)) continue;
         seenPois.add(key);
 
+        const wikidata = feat.properties.wikidata || feat.properties['brand:wikidata'] || null;
+        const brand = feat.properties.brand || null;
+        const brandWikidata = feat.properties['brand:wikidata'] || feat.properties.brand_wikidata || null;
+        const openingHours = feat.properties.opening_hours || null;
+        const wheelchair = feat.properties.wheelchair || null;
+        const names = extractMultilingualNames(feat.properties);
+
         const feature = {
           type: 'Feature',
           geometry: { type: 'Point', coordinates: coords },
@@ -182,7 +223,15 @@ async function main() {
             kind,
             kind_detail: feat.properties.kind_detail || '',
             elevation: feat.properties.elevation || null,
-            iata: feat.properties.iata || null
+            iata: feat.properties.iata || null,
+            wikidata,
+            brand,
+            brand_wikidata: brandWikidata,
+            opening_hours: openingHours,
+            wheelchair,
+            names,
+            addr_housenumber: feat.properties['addr:housenumber'] || null,
+            addr_street: feat.properties['addr:street'] || null
           }
         };
         poisFeatures.push(feature);
@@ -216,16 +265,26 @@ async function main() {
         if (seenPlaces.has(key)) continue;
         seenPlaces.add(key);
 
+        const names = extractMultilingualNames(feat.properties);
+        let population = null;
+        if (feat.properties.population) {
+          const popNum = parseInt(feat.properties.population, 10);
+          if (!isNaN(popNum) && popNum > 0) population = popNum;
+        }
+
         const feature = {
           type: 'Feature',
           geometry: { type: 'Point', coordinates: coords },
           properties: {
             name,
             name_en: feat.properties['name:en'] || '',
+            name_zh: feat.properties['name:zh'] || '',
+            name_ja: feat.properties['name:ja'] || '',
             kind,
             kind_detail: feat.properties.kind_detail || '',
-            population: feat.properties.population || null,
-            wikidata: feat.properties.wikidata || null
+            population,
+            wikidata: feat.properties.wikidata || null,
+            names
           }
         };
 
@@ -245,6 +304,13 @@ async function main() {
         const feat = roadsLayer.feature(i);
         if (feat.type !== 2) continue; // LineStrings
         const geom = feat.loadGeometry();
+        const maxspeed = parseMaxspeed(feat.properties.maxspeed);
+        const lanes = parseLanes(feat.properties.lanes);
+        const surface = feat.properties.surface || null;
+        const cycleway = feat.properties.cycleway || null;
+        const sidewalk = feat.properties.sidewalk || null;
+        const width = feat.properties.width ? parseFloat(feat.properties.width) || null : null;
+
         const props = {
           name: feat.properties.name || feat.properties['name:en'] || '',
           kind: feat.properties.kind || 'road',
@@ -252,7 +318,13 @@ async function main() {
           ref: feat.properties.ref || '',
           oneway: feat.properties.oneway === 'yes',
           is_bridge: !!feat.properties.is_bridge,
-          is_tunnel: !!feat.properties.is_tunnel
+          is_tunnel: !!feat.properties.is_tunnel,
+          maxspeed,
+          lanes,
+          surface,
+          cycleway,
+          sidewalk,
+          width
         };
 
         for (const line of geom) {
@@ -307,6 +379,45 @@ async function main() {
 
           if (isPark) {
             parksFeatures.push(polygonFeature);
+          }
+        }
+      }
+    }
+
+    // 6. TRANSIT LAYER
+    const transitLayer = vt.layers['transit'] || vt.layers['transportation'] || vt.layers['railway'];
+    if (transitLayer) {
+      const extent = transitLayer.extent || 4096;
+      for (let i = 0; i < transitLayer.length; i++) {
+        const feat = transitLayer.feature(i);
+        const geom = feat.loadGeometry();
+        const colour = feat.properties.colour || feat.properties.color || null;
+        const operator = feat.properties.operator || null;
+        const network = feat.properties.network || null;
+        const ref = feat.properties.ref || '';
+        const name = feat.properties.name || feat.properties['name:en'] || '';
+        const kind = feat.properties.kind || feat.properties.class || 'transit';
+
+        const props = { name, kind, ref, colour, operator, network };
+
+        if (feat.type === 2) { // LineString
+          for (const line of geom) {
+            if (line.length < 2) continue;
+            const coords = line.map(pt => tileCoordsToLngLat(pt.x, pt.y, z, x, y, extent));
+            transitFeatures.push({
+              type: 'Feature',
+              geometry: { type: 'LineString', coordinates: coords },
+              properties: props
+            });
+          }
+        } else if (feat.type === 1) { // Station / Stop Point
+          if (geom[0] && geom[0][0]) {
+            const coords = tileCoordsToLngLat(geom[0][0].x, geom[0][0].y, z, x, y, extent);
+            transitFeatures.push({
+              type: 'Feature',
+              geometry: { type: 'Point', coordinates: coords },
+              properties: props
+            });
           }
         }
       }
@@ -461,6 +572,13 @@ async function main() {
     const binPath = path.join(outDir, 'landuse.bin');
     fs.writeFileSync(binPath, binBuf);
     console.log(`  ✓ Wrote landuse.bin (${(binBuf.length / (1024 * 1024)).toFixed(2)} MB)`);
+  }
+
+  // --- WRITE TRANSIT ARTIFACTS ---
+  if (transitFeatures.length > 0) {
+    const transitPath = path.join(outDir, 'transit.json');
+    fs.writeFileSync(transitPath, JSON.stringify({ type: 'FeatureCollection', features: transitFeatures }));
+    console.log(`  ✓ Wrote transit.json (${transitFeatures.length} features, ${(fs.statSync(transitPath).size / 1024).toFixed(1)} KB)`);
   }
 }
 

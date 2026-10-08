@@ -20,7 +20,7 @@ on:
       force:
         description: 'Force overwrite existing R2 files (true/false)'
         required: false
-        default: 'false'
+        default: 'true'
 
 jobs:
   split-metro:

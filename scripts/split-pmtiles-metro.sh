@@ -41,6 +41,9 @@ tile-join -e "${WORKDIR}/tiles" \
   --layer=places \
   --layer=roads \
   --layer=landuse \
+  --layer=transportation \
+  --layer=transit \
+  --layer=railway \
   "${WORKDIR}/input.pmtiles" || true
 
 # Strip landuse & building layers from base PMTiles (shrinks base archive by up to 50%-70%)
@@ -90,7 +93,7 @@ done
 
 # Closing the Long Tail & Street Network (backfill if missing in R2, or FORCE=true)
 FORCE="${FORCE:-false}"
-for FILE in pois.json landmarks.json areas.json districts.json streets.json streets.bin; do
+for FILE in pois.json landmarks.json areas.json districts.json streets.json streets.bin transit.json; do
   if [ -f "${WORKDIR}/out/${FILE}" ]; then
     if [ "$FORCE" = "true" ] || ! aws s3 ls "s3://globe/data/${SLUG}-2d/${FILE}" --endpoint-url "$ENDPOINT" >/dev/null 2>&1; then
       aws s3 cp "${WORKDIR}/out/${FILE}" "s3://globe/data/${SLUG}-2d/${FILE}" --endpoint-url "$ENDPOINT"
